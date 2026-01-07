@@ -8,7 +8,7 @@ from functions.array_training import ArgparseArray, name_instance
 argparse_array = ArgparseArray(
     random_seed=list(range(50)),
     mode='pretrain',
-    save_path=name_instance('random_seed', base_folder='data/cifar/pretrain/'),
+    save_path=name_instance('random_seed', base_folder='/nfs/nhome/live/cdomine/old_sam/multi-task/data/cifar/pretrain_5/'),
     model='resnet'
 )
 

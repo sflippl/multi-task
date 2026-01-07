@@ -10,8 +10,8 @@ argparse_array = ArgparseArray(
     mode=['finetuning'],
     n_samples=[10, 20, 50, 100, 200, 500, 1000],
     finetune_scaling=[0.125, 0.25, 0.5, 1., 2.],
-    save_path=name_instance('random_seed', 'mode', 'n_samples', 'finetune_scaling', base_folder='data/cifar/main/'),
-    load_path=(lambda array_id, random_seed, **kwargs: f'data/cifar/pretrain/random_seed={random_seed}/model.pt'),
+    save_path=name_instance('random_seed', 'mode', 'n_samples', 'finetune_scaling', base_folder='/nfs/gatsbystor/cdomine/cifar_testing/cifar/main_samscale_last'),
+    load_path=(lambda array_id, random_seed, **kwargs: f'/nfs/nhome/live/cdomine/old_sam/multi-task/data/cifar/pretrain_5/random_seed={random_seed}/model.pt'),
     model='resnet'
 )
 
