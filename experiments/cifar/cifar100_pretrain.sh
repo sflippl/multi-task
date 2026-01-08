@@ -11,5 +11,4 @@ mkdir -p /nfs/nhome/live/cdomine/old_sam/multi-task/slurm
 cd /nfs/nhome/live/cdomine/old_sam/multi-task/
 source ~/.bashrc
 conda activate NPG-env
-
 python experiments/cifar/cifar100_pretrain.py $SLURM_ARRAY_TASK_ID

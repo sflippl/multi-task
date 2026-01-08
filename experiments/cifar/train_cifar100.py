@@ -138,13 +138,61 @@ def data_to_numpy(train_set, test_set, train_indices, test_indices):
 
     return X_train, y_train, X_valid, y_valid
 
+def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "first_vs_rest", 
+                         ):
+    """
+    Adjust the relative scale of model layers based on the specified policy.
+    Args:
+        model: The neural network model
+        alpha: Scaling factor
+        model_name: Type of model ('resnet' or 'vit')
+        policy: Scaling policy ('first_vs_rest', 'constant', 'linear')
+        k: Number of layers to apply scaling to (for constant/linear policies)
+        prevent_weight_increase: If True, skip scaling when it would increase weights
+    """
+    print('alpha:', alpha)
+    print('policy:', policy)
+    if alpha != 1.0:
+        print('got in')
+        if policy == "first_vs_rest":
+            # Original behavior
+            _apply_first_vs_rest_scaling(model, alpha, model_name)
+        elif policy == "linear":
+            _apply_first_vs_rest_scaling(model, alpha, model_name)
+        else:
+            raise ValueError(f"Unknown policy: {policy}")
+
+
+def _apply_first_vs_rest_scaling(model, alpha: float, model_name: str):
+    """Original scaling behavior: scale first layer only."""
+    if model_name == "resnet":
+        # First layer = conv1
+        model.conv1.weight.data.div_(alpha)
+        if model.conv1.bias is not None:
+            model.conv1.bias.data.div_(alpha)
+        # ResNet has BatchNorm -> no readout scaling     param.data = param.data * args.finetune_scaling
+
+    elif model_name == "vit":
+        # First layer = patch embedding
+        model.emb.weight.data.div_(alpha)
+        if model.emb.bias is not None:
+            model.emb.bias.data.div_(alpha)
+        # Also scale learned tokens
+        if getattr(model, "cls_token", None) is not None:
+            model.cls_token.data.div_(alpha)
+        model.pos_emb.data.div_(alpha)
+        # ViT has LayerNorm -> no readout scaling
+
+    else:
+        raise ValueError(f"Unknown model_name: {model_name}")
+    
+    
+
 def train_model(model, X_train, y_train, X_train_aux, y_train_aux, criterion, optimizer, device,
                 batch_size=128, batch_size_aux = 128, X_valid=None, y_valid=None, X_valid_aux=None, y_valid_aux=None,
                 n_epochs=25, loss_thresh=0.0, aux_scale=1.0, model2=None):
     since = time.time()
 
-
-    
     losses = {'train': [], 'train_aux': [], 'valid': [], 'valid_aux': []}
     accs = {'train': [], 'train_aux': [], 'valid': [], 'valid_aux': []}
     
@@ -277,6 +325,8 @@ def train_model(model, X_train, y_train, X_train_aux, y_train_aux, criterion, op
     return model, losses, accs
 
 def main(args):
+    print("Creating save directory...")
+    print("Save path:", args.save_path)
     pathlib.Path(args.save_path).mkdir(parents=True, exist_ok=True)
     
     torch.manual_seed(args.random_seed)
@@ -326,13 +376,22 @@ def main(args):
         model.load_state_dict(torch.load(args.load_path))
         for param in model.parameters():
             param.data = param.data * args.finetune_scaling
+    apply_relative_scaling(model, args.alpha, args.model, args.alpha_policy, 
+                         )
+    if args.alpha != 1.0:
+        if args.model == "resnet":
+            print("Conv1 norm after scaling:", model.conv1.weight.norm().item())
+        elif args.model == "vit":
+            print("Embedding norm after scaling:", model.emb.weight.norm().item())
 
+    print("Moving model to device and setting up training...")
     model = model.to(args.device)
     criterion = nn.CrossEntropyLoss()
     if args.model == 'resnet':
         optimizer = optim.SGD(model.parameters(), lr=1e-3, momentum=0.9)
     if args.model == 'vit':
         optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-5)
+        
     X_train_aux = X_train_59[subsample_aux]
     y_train_aux = y_train_59[subsample_aux]
     if args.mode == 'pretrain':
@@ -372,6 +431,8 @@ def main(args):
         )
     losses = {key: np.array(value) for key, value in losses.items()}
     accs = {key: np.array(value) for key, value in accs.items()}
+    print("Saving results...")
+    print("Results will be saved to:", args.save_path)
     torch.save(model.state_dict(), os.path.join(args.save_path, 'model.pt'))
     np.save(os.path.join(args.save_path, 'losses.npy'), losses)
     np.save(os.path.join(args.save_path, 'accs.npy'), accs)
@@ -389,6 +450,14 @@ def get_parser():
     parser.add_argument('--loss_threshold', type=float, default=1e-2)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--model', choices=['vit', 'resnet'], default='resnet')
+    parser.add_argument('--alpha', type=float, default=1.0,
+                        help='Relative scaling factor (first vs rest).')
+    parser.add_argument('--alpha_load', type=float, default=1.0,
+                        help='Relative scaling factor (first vs rest).')
+    parser.add_argument('--alpha_policy', type=str, default='first_vs_rest',
+                        choices=['first_vs_rest', 'all_except_output'],
+                        help='Which parts of the model to scale at init.')
+    
     return parser
 
 if __name__ == '__main__':
