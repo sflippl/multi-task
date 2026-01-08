@@ -4,7 +4,7 @@
 #SBATCH --mem=20G
 #SBATCH --gres=gpu:1
 #SBATCH --time=16:00:00
-#SBATCH --array=0-49
+#SBATCH --array=0-600
 #SBATCH --output=slurm/slurm-%A_%a.out
 
 mkdir -p /nfs/nhome/live/cdomine/old_sam/multi-task/slurm
