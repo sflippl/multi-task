@@ -139,7 +139,7 @@ def data_to_numpy(train_set, test_set, train_indices, test_indices):
     return X_train, y_train, X_valid, y_valid
 
 def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "first_vs_rest", 
-                         ):
+                         finetune_scaling: float = 1 ):
     """
     Adjust the relative scale of model layers based on the specified policy.
     Args:
@@ -155,38 +155,86 @@ def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "
     if alpha != 1.0:
         print('got in')
         if policy == "first_vs_rest":
-            # Original behavior
             _apply_first_vs_rest_scaling(model, alpha, model_name)
-        elif policy == "linear":
-            _apply_first_vs_rest_scaling(model, alpha, model_name)
+        elif policy == "fr_gamma_alpha_fc":
+             _apply_first_vs_rest_gamma_alpha_fc(model, alpha, model_name,finetune_scaling)
+        elif policy == "fr_gamma_alpha":
+            _apply_first_vs_rest_gamma_alpha(model, alpha, model_name)
+        elif  policy == "fr_gamma:":
+            _apply_first_vs_rest_gamma(model, alpha, model_name)
         else:
             raise ValueError(f"Unknown policy: {policy}")
 
 
 def _apply_first_vs_rest_scaling(model, alpha: float, model_name: str):
     """Original scaling behavior: scale first layer only."""
-    if model_name == "resnet":
-        # First layer = conv1
-        model.conv1.weight.data.div_(alpha)
-        if model.conv1.bias is not None:
-            model.conv1.bias.data.div_(alpha)
-        # ResNet has BatchNorm -> no readout scaling     param.data = param.data * args.finetune_scaling
-
-    elif model_name == "vit":
-        # First layer = patch embedding
-        model.emb.weight.data.div_(alpha)
-        if model.emb.bias is not None:
-            model.emb.bias.data.div_(alpha)
-        # Also scale learned tokens
-        if getattr(model, "cls_token", None) is not None:
-            model.cls_token.data.div_(alpha)
-        model.pos_emb.data.div_(alpha)
-        # ViT has LayerNorm -> no readout scaling
-
-    else:
-        raise ValueError(f"Unknown model_name: {model_name}")
+    with torch.no_grad():
+        if model_name == "resnet":
+            # First layer = conv1
+            model.conv1.weight.div_(alpha)
+            if model.conv1.bias is not None:
+                model.conv1.bias.div_(alpha)
+            # ResNet has BatchNorm -> no readout scaling     param.data = param.data * args.finetune_scaling
+        elif model_name == "vit":
+            # First layer = patch embedding
+            model.emb.weight.data.div_(alpha)
+            if model.emb.bias is not None:
+                model.emb.bias.data.div_(alpha)
+            # Also scale learned tokens
+            if getattr(model, "cls_token", None) is not None:
+                model.cls_token.data.div_(alpha)
+            model.pos_emb.data.div_(alpha)
+            # ViT has LayerNorm -> no readout scaling
+        else:
+            raise ValueError(f"Unknown model_name: {model_name}")
     
-    
+def _apply_first_vs_rest_gamma_alpha_fc(model, alpha: float, model_name: str, finetune_scaling: float = 1.0):
+    """
+    Scales the first layer (weights/bias), the first BatchNorm (gamma),
+    and applies optional finetune scaling to the readout.
+    """
+    with torch.no_grad():
+        if model_name == "resnet":
+            # 1. Scale First Conv Layer
+            model.conv1.weight.div_(alpha)
+            if model.conv1.bias is not None:
+                model.conv1.bias.div_(alpha)
+            # 2. Scale First BatchNorm Gamma (Weight)
+            # This ensures the scaling isn't "reset" by normalization
+            if hasattr(model, 'bn1'):
+                model.bn1.weight.div_(alpha)
+            # 3. Scale Readout Layer (fc)
+            # Applying the finetune_scaling to the final classifier
+            if hasattr(model, 'fc'):
+                for param in model.fc.parameters():
+                    param.mul_(finetune_scaling)
+
+def _apply_first_vs_rest_gamma_alpha(model, alpha: float, model_name: str, finetune_scaling: float = 1.0):
+    """
+    Scales the first layer (weights/bias), the first BatchNorm (gamma),
+    and applies optional finetune scaling to the readout.
+    """
+    with torch.no_grad():
+        if model_name == "resnet":
+            # 1. Scale First Conv Layer
+            model.conv1.weight.div_(alpha)
+            if model.conv1.bias is not None:
+                model.conv1.bias.div_(alpha)
+            # 2. Scale First BatchNorm Gamma (Weight)
+            # This ensures the scaling isn't "reset" by normalization
+            if hasattr(model, 'bn1'):
+                model.bn1.weight.div_(alpha)
+                # Note: Scaling bn1.bias (beta) is optional depending on
+
+
+def _apply_first_vs_rest_gamma(model, alpha: float, model_name: str, finetune_scaling: float = 1.0):
+    with torch.no_grad():
+            if hasattr(model, 'bn1'):
+                model.bn1.weight.div_(alpha)
+                # Note: Scaling bn1.bias (beta) is optional depending on
+                # if you want to shift the threshold or just scale the signal.
+                # model.bn1.bias.div_(alpha)
+
 
 def train_model(model, X_train, y_train, X_train_aux, y_train_aux, criterion, optimizer, device,
                 batch_size=128, batch_size_aux = 128, X_valid=None, y_valid=None, X_valid_aux=None, y_valid_aux=None,
@@ -376,8 +424,10 @@ def main(args):
         model.load_state_dict(torch.load(args.load_path))
         for param in model.parameters():
             param.data = param.data * args.finetune_scaling
-    apply_relative_scaling(model, args.alpha, args.model, args.alpha_policy, 
+            
+    apply_relative_scaling(model, args.alpha, args.model, args.alpha_policy, args.finetune_scaling
                          )
+    
     if args.alpha != 1.0:
         if args.model == "resnet":
             print("Conv1 norm after scaling:", model.conv1.weight.norm().item())
@@ -455,7 +505,7 @@ def get_parser():
     parser.add_argument('--alpha_load', type=float, default=1.0,
                         help='Relative scaling factor (first vs rest).')
     parser.add_argument('--alpha_policy', type=str, default='first_vs_rest',
-                        choices=['first_vs_rest', 'all_except_output'],
+                        choices=['first_vs_rest', 'all_except_output','fr_gamma_alpha_fc', 'fr_gamma_alpha', 'fr_gamma'],
                         help='Which parts of the model to scale at init.')
     
     return parser
