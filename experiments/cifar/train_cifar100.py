@@ -139,7 +139,7 @@ def data_to_numpy(train_set, test_set, train_indices, test_indices):
     return X_train, y_train, X_valid, y_valid
 
 def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "first_vs_rest", 
-                         finetune_scaling: float = 1 ):
+                         finetune_scaling_last: float = 1 ):
     """
     Adjust the relative scale of model layers based on the specified policy.
     Args:
@@ -157,12 +157,21 @@ def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "
         if policy == "first_vs_rest":
             _apply_first_vs_rest_scaling(model, alpha, model_name)
         elif policy == "fr_gamma_alpha_fc":
-             _apply_first_vs_rest_gamma_alpha_fc(model, alpha, model_name,finetune_scaling)
+             _apply_first_vs_rest_gamma_alpha_fc(model, alpha, model_name,finetune_scaling_last)
         elif policy == "fr_gamma_alpha":
             _apply_first_vs_rest_gamma_alpha(model, alpha, model_name)
-        elif  policy == "fr_gamma:":
+        elif  policy == "fr_gamma":
             _apply_first_vs_rest_gamma(model, alpha, model_name)
+        elif  policy == "fr_block_1":
+            _apply_first_vs_rest_block_1(model, alpha, model_name)
+        elif  policy == "fr_block_12":
+            _apply_first_vs_rest_block_12(model, alpha, model_name)
+        elif  policy == "fr_block_123":
+            _apply_first_vs_rest_block_123(model, alpha, model_name)
+        elif  policy == "fr_fc":
+            _apply_fc (model, alpha, model_name)
         else:
+        
             raise ValueError(f"Unknown policy: {policy}")
 
 
@@ -188,7 +197,7 @@ def _apply_first_vs_rest_scaling(model, alpha: float, model_name: str):
         else:
             raise ValueError(f"Unknown model_name: {model_name}")
     
-def _apply_first_vs_rest_gamma_alpha_fc(model, alpha: float, model_name: str, finetune_scaling: float = 1.0):
+def _apply_first_vs_rest_gamma_alpha_fc(model, alpha: float, model_name: str, finetune_scaling_last: float = 1.0):
     """
     Scales the first layer (weights/bias), the first BatchNorm (gamma),
     and applies optional finetune scaling to the readout.
@@ -207,7 +216,7 @@ def _apply_first_vs_rest_gamma_alpha_fc(model, alpha: float, model_name: str, fi
             # Applying the finetune_scaling to the final classifier
             if hasattr(model, 'fc'):
                 for param in model.fc.parameters():
-                    param.mul_(finetune_scaling)
+                    param.mul_(finetune_scaling_last)
 
 def _apply_first_vs_rest_gamma_alpha(model, alpha: float, model_name: str, finetune_scaling: float = 1.0):
     """
@@ -235,12 +244,57 @@ def _apply_first_vs_rest_gamma(model, alpha: float, model_name: str, finetune_sc
                 # if you want to shift the threshold or just scale the signal.
                 # model.bn1.bias.div_(alpha)
 
+def _apply_first_vs_rest_block_1(model, alpha: float, model_name: str, finetune_scaling: float = 1.0): 
+  # Calculate the scale factor
+    scale = 1.0 / alpha
+    with torch.no_grad():
+        # Option A: BLOCK (The first block)
+        for name, param in model.layer1.named_parameters():
+            param.copy_(param * scale)
+           # Option A: BLOCK (The first block) and second 
+      
+def _apply_first_vs_rest_block_12(model, alpha: float, model_name: str, finetune_scaling: float = 1.0): 
+  # Calculate the scale factor
+    scale = 1.0 / alpha
+    with torch.no_grad():
+        # Option A: BLOCK (The first block)
+        for name, param in model.layer1.named_parameters():
+            param.copy_(param * scale)
+           # Option A: BLOCK (The first block) and second 
+        for name, param in model.layer2.named_parameters():
+            param.copy_(param * scale)
+            
+def _apply_first_vs_rest_block_123(model, alpha: float, model_name: str, finetune_scaling: float = 1.0): 
+  # Calculate the scale factor
+    scale = 1.0 / alpha
+    with torch.no_grad():
+        # Option A: BLOCK (The first block)
+        for name, param in model.layer1.named_parameters():
+            param.copy_(param * scale)
+           # Option A: BLOCK (The first block) and second 
+        for name, param in model.layer2.named_parameters():
+            param.copy_(param * scale)
+        for name, param in model.layer3.named_parameters():
+            param.copy_(param * scale)
+            
+def _apply_fc(model, alpha: float, model_name: str, finetune_scaling_last: float = 1.0):
+    """
+    Scales the first layer (weights/bias), the first BatchNorm (gamma),
+    and applies optional finetune scaling to the readout.
+    """
+    with torch.no_grad():
+        if model_name == "resnet":
+            # Applying the finetune_scaling to the final classifier
+            if hasattr(model, 'fc'):
+                for param in model.fc.parameters():
+                    param.mul_(finetune_scaling_last)
 
+
+ 
 def train_model(model, X_train, y_train, X_train_aux, y_train_aux, criterion, optimizer, device,
                 batch_size=128, batch_size_aux = 128, X_valid=None, y_valid=None, X_valid_aux=None, y_valid_aux=None,
                 n_epochs=25, loss_thresh=0.0, aux_scale=1.0, model2=None):
     since = time.time()
-
     losses = {'train': [], 'train_aux': [], 'valid': [], 'valid_aux': []}
     accs = {'train': [], 'train_aux': [], 'valid': [], 'valid_aux': []}
     
@@ -425,7 +479,7 @@ def main(args):
         for param in model.parameters():
             param.data = param.data * args.finetune_scaling
             
-    apply_relative_scaling(model, args.alpha, args.model, args.alpha_policy, args.finetune_scaling
+    apply_relative_scaling(model, args.alpha, args.model, args.alpha_policy, args.finetune_scaling_last
                          )
     
     if args.alpha != 1.0:
@@ -495,6 +549,7 @@ def get_parser():
     parser.add_argument('--mode', choices=['pretrain', 'multitask', 'singletask', 'finetuning'], required=True)
     parser.add_argument('--random_seed', type=int, default=0)
     parser.add_argument('--finetune_scaling', type=float, default=1.0)
+    parser.add_argument('--finetune_scaling_last', type=float, default=1.0)
     parser.add_argument('--save_path', type=str, required=True)
     parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--loss_threshold', type=float, default=1e-2)
@@ -505,7 +560,7 @@ def get_parser():
     parser.add_argument('--alpha_load', type=float, default=1.0,
                         help='Relative scaling factor (first vs rest).')
     parser.add_argument('--alpha_policy', type=str, default='first_vs_rest',
-                        choices=['first_vs_rest', 'all_except_output','fr_gamma_alpha_fc', 'fr_gamma_alpha', 'fr_gamma'],
+                        choices=['first_vs_rest', 'all_except_output','fr_gamma_alpha_fc', 'fr_gamma_alpha','fr_gamma','fr_block_1','fr_block_12','fr_block_123','fr_fc'],
                         help='Which parts of the model to scale at init.')
     
     return parser

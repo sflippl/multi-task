@@ -8,10 +8,10 @@ from functions.array_training import ArgparseArray, name_instance
 argparse_array = ArgparseArray(
     random_seed=list(range(50)),
     mode='pretrain',
-    alpha_policy=['first_vs_rest'], #fr_gamma_alpha_fc, fr_gamma_alpha, fr_gamma, first_vs_rest
+    alpha_policy=['fr_block'], #fr_gamma_alpha_fc, fr_gamma_alpha, fr_gamma, first_vs_rest, fr_block
     model='resnet',
-    save_path=name_instance('random_seed','alpha', 'alpha_policy','model', base_folder='/nfs/nhome/live/cdomine/old_sam/multi-task/data/cifar/pretrain_first_vs_rest/'),
-    alpha=[0.01,0.1,0.5,1.0,2,5]
+    save_path=name_instance('random_seed','alpha', 'alpha_policy','model', base_folder='/nfs/nhome/live/cdomine/old_sam/multi-task/data/cifar/pretrain_fr_block_12/'),
+    alpha=[0.01,0.1,0.5,1.0,2,5,10]
 )
 
 def main(args):
