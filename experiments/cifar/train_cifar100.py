@@ -135,11 +135,10 @@ def data_to_numpy(train_set, test_set, train_indices, test_indices):
     for inputs, labels in dataloaders['valid']:
         X_valid = inputs.data.numpy()
         y_valid = labels.data.numpy()
-
     return X_train, y_train, X_valid, y_valid
 
 def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "first_vs_rest", 
-                         finetune_scaling_last: float = 1 ):
+                         finetune_scaling_last: float = 1,layer:int=0 ):
     """
     Adjust the relative scale of model layers based on the specified policy.
     Args:
@@ -158,6 +157,8 @@ def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "
             _apply_first_vs_rest_scaling(model, alpha, model_name)
         elif policy == "fr_gamma_alpha_fc":
              _apply_first_vs_rest_gamma_alpha_fc(model, alpha, model_name,finetune_scaling_last)
+        elif  policy == "fr_fc":
+            _apply_fc(model, alpha, model_name,finetune_scaling_last)
         elif policy == "fr_gamma_alpha":
             _apply_first_vs_rest_gamma_alpha(model, alpha, model_name)
         elif  policy == "fr_gamma":
@@ -168,10 +169,13 @@ def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "
             _apply_first_vs_rest_block_12(model, alpha, model_name)
         elif  policy == "fr_block_123":
             _apply_first_vs_rest_block_123(model, alpha, model_name)
-        elif  policy == "fr_fc":
-            _apply_fc (model, alpha, model_name)
+        elif  policy == "fr_block_1234":
+            _apply_first_vs_rest_block_1234(model, alpha, model_name)
+        elif policy == "fr_block_12alpha":
+             _apply_first_vs_rest_block_12alpha(model, alpha, model_name)
+        elif policy == "fr_block_vit":
+            _scale_layer_weights_vit(model, layer, alpha, model_name)
         else:
-        
             raise ValueError(f"Unknown policy: {policy}")
 
 
@@ -218,7 +222,7 @@ def _apply_first_vs_rest_gamma_alpha_fc(model, alpha: float, model_name: str, fi
                 for param in model.fc.parameters():
                     param.mul_(finetune_scaling_last)
 
-def _apply_first_vs_rest_gamma_alpha(model, alpha: float, model_name: str, finetune_scaling: float = 1.0):
+def _apply_first_vs_rest_gamma_alpha(model, alpha: float, model_name: str):
     """
     Scales the first layer (weights/bias), the first BatchNorm (gamma),
     and applies optional finetune scaling to the readout.
@@ -236,47 +240,82 @@ def _apply_first_vs_rest_gamma_alpha(model, alpha: float, model_name: str, finet
                 # Note: Scaling bn1.bias (beta) is optional depending on
 
 
-def _apply_first_vs_rest_gamma(model, alpha: float, model_name: str, finetune_scaling: float = 1.0):
+def _apply_first_vs_rest_gamma(model, alpha: float, model_name: str):
     with torch.no_grad():
+         if model_name == "resnet":
             if hasattr(model, 'bn1'):
                 model.bn1.weight.div_(alpha)
                 # Note: Scaling bn1.bias (beta) is optional depending on
                 # if you want to shift the threshold or just scale the signal.
                 # model.bn1.bias.div_(alpha)
 
-def _apply_first_vs_rest_block_1(model, alpha: float, model_name: str, finetune_scaling: float = 1.0): 
+def _apply_first_vs_rest_block_1(model, alpha: float, model_name: str): 
   # Calculate the scale factor
     scale = 1.0 / alpha
     with torch.no_grad():
-        # Option A: BLOCK (The first block)
-        for name, param in model.layer1.named_parameters():
-            param.copy_(param * scale)
-           # Option A: BLOCK (The first block) and second 
+         if model_name == "resnet":
+            # Option A: BLOCK (The first block)
+            for name, param in model.layer1.named_parameters():
+                param.copy_(param * scale)
+            # Option A: BLOCK (The first block) and second 
+           
+def _apply_first_vs_rest_block_12alpha(model, alpha: float, model_name: str): 
+    scale = 1.0 / alpha
+    with torch.no_grad():
+            if model_name == "resnet":
+                #Scale First Conv Layer
+                model.conv1.weight.div_(alpha)
+                if model.conv1.bias is not None:
+                    model.conv1.bias.div_(alpha)
+                if hasattr(model, 'bn1'):
+                    model.bn1.weight.div_(alpha)
+                for name, param in model.layer1.named_parameters():
+                    param.copy_(param * scale)        
+                for name, param in model.layer2.named_parameters():
+                    param.copy_(param * scale)       
       
-def _apply_first_vs_rest_block_12(model, alpha: float, model_name: str, finetune_scaling: float = 1.0): 
+def _apply_first_vs_rest_block_12(model, alpha: float, model_name: str): 
   # Calculate the scale factor
     scale = 1.0 / alpha
     with torch.no_grad():
-        # Option A: BLOCK (The first block)
-        for name, param in model.layer1.named_parameters():
-            param.copy_(param * scale)
-           # Option A: BLOCK (The first block) and second 
-        for name, param in model.layer2.named_parameters():
-            param.copy_(param * scale)
+         if model_name == "resnet":
+            # Option A: BLOCK (The first block)
+            for name, param in model.layer1.named_parameters():
+                param.copy_(param * scale)
+            # Option A: BLOCK (The first block) and second 
+            for name, param in model.layer2.named_parameters():
+                param.copy_(param * scale)
             
-def _apply_first_vs_rest_block_123(model, alpha: float, model_name: str, finetune_scaling: float = 1.0): 
+def _apply_first_vs_rest_block_123(model, alpha: float, model_name: str): 
   # Calculate the scale factor
     scale = 1.0 / alpha
     with torch.no_grad():
-        # Option A: BLOCK (The first block)
-        for name, param in model.layer1.named_parameters():
-            param.copy_(param * scale)
-           # Option A: BLOCK (The first block) and second 
-        for name, param in model.layer2.named_parameters():
-            param.copy_(param * scale)
-        for name, param in model.layer3.named_parameters():
-            param.copy_(param * scale)
-            
+        if model_name == "resnet":
+            # Option A: BLOCK (The first block)
+            for name, param in model.layer1.named_parameters():
+                param.copy_(param * scale)
+            # Option A: BLOCK (The first block) and second 
+            for name, param in model.layer2.named_parameters():
+                param.copy_(param * scale)
+            for name, param in model.layer3.named_parameters():
+                param.copy_(param * scale)
+
+def _apply_first_vs_rest_block_1234(model, alpha: float, model_name: str): 
+  # Calculate the scale factor
+    scale = 1.0 / alpha
+    with torch.no_grad():
+        if model_name == "resnet":
+            # Option A: BLOCK (The first block)
+            for name, param in model.layer1.named_parameters():
+                param.copy_(param * scale)
+            # Option A: BLOCK (The first block) and second 
+            for name, param in model.layer2.named_parameters():
+                param.copy_(param * scale)
+            for name, param in model.layer3.named_parameters():
+                param.copy_(param * scale)
+            for name, param in model.layer4.named_parameters():
+                param.copy_(param * scale)
+                
 def _apply_fc(model, alpha: float, model_name: str, finetune_scaling_last: float = 1.0):
     """
     Scales the first layer (weights/bias), the first BatchNorm (gamma),
@@ -289,7 +328,28 @@ def _apply_fc(model, alpha: float, model_name: str, finetune_scaling_last: float
                 for param in model.fc.parameters():
                     param.mul_(finetune_scaling_last)
 
-
+def scale_layer_weights_vit(model, layer_idx:int ,alpha:float ,model_name: str ):
+    """
+    Directly scales the parameter values of a specific encoder layer.
+    
+    Args:
+        model: Your ViT instance.
+        layer_idx: The index of the encoder layer (0 for the 1st layer).
+        scale: The multiplier (e.g., 2.0 to upscale values, 0.5 to downscale).
+    """
+    # Access the specific TransformerEncoder block
+    scale = 1.0 / alpha
+    target_layer = model.enc[layer_idx]
+    
+    print(f"Scaling parameters in encoder layer {layer_idx} by factor: {scale}")
+    
+    with torch.no_grad():
+        if model_name == "vit":
+            for name, param in target_layer.named_parameters():
+                # In-place multiplication
+                param.mul_(scale)
+            
+    return model
  
 def train_model(model, X_train, y_train, X_train_aux, y_train_aux, criterion, optimizer, device,
                 batch_size=128, batch_size_aux = 128, X_valid=None, y_valid=None, X_valid_aux=None, y_valid_aux=None,
@@ -555,12 +615,13 @@ def get_parser():
     parser.add_argument('--loss_threshold', type=float, default=1e-2)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--model', choices=['vit', 'resnet'], default='resnet')
+    parser.add_argument('--layers', type=int, default=0)
     parser.add_argument('--alpha', type=float, default=1.0,
                         help='Relative scaling factor (first vs rest).')
     parser.add_argument('--alpha_load', type=float, default=1.0,
                         help='Relative scaling factor (first vs rest).')
     parser.add_argument('--alpha_policy', type=str, default='first_vs_rest',
-                        choices=['first_vs_rest', 'all_except_output','fr_gamma_alpha_fc', 'fr_gamma_alpha','fr_gamma','fr_block_1','fr_block_12','fr_block_123','fr_fc'],
+                        choices=['first_vs_rest', 'all_except_output','fr_gamma_alpha_fc', 'fr_gamma_alpha','fr_gamma','fr_block_1','fr_block_12','fr_block_123','fr_block_1234','fr_block_12alpha','fr_fc','fr_block_vit'],
                         help='Which parts of the model to scale at init.')
     
     return parser
