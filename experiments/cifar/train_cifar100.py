@@ -38,7 +38,6 @@ class ViT(nn.Module):
             nn.Linear(hidden, num_classes) # for cls_token
         )
 
-
     def forward(self, x):
         out = self._to_words(x)
         out = self.emb(out)
@@ -138,7 +137,7 @@ def data_to_numpy(train_set, test_set, train_indices, test_indices):
     return X_train, y_train, X_valid, y_valid
 
 def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "first_vs_rest", 
-                         finetune_scaling_last: float = 1,layer:int=0 ):
+                         finetune_scaling_last: float = 1,layers:list=[0] ):
     """
     Adjust the relative scale of model layers based on the specified policy.
     Args:
@@ -151,6 +150,7 @@ def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "
     """
     print('alpha:', alpha)
     print('policy:', policy)
+    print('layers:', layers)
     if alpha != 1.0:
         print('got in')
         if policy == "first_vs_rest":
@@ -158,6 +158,7 @@ def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "
         elif policy == "fr_gamma_alpha_fc":
              _apply_first_vs_rest_gamma_alpha_fc(model, alpha, model_name,finetune_scaling_last)
         elif  policy == "fr_fc":
+            print('here')
             _apply_fc(model, alpha, model_name,finetune_scaling_last)
         elif policy == "fr_gamma_alpha":
             _apply_first_vs_rest_gamma_alpha(model, alpha, model_name)
@@ -174,7 +175,7 @@ def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "
         elif policy == "fr_block_12alpha":
              _apply_first_vs_rest_block_12alpha(model, alpha, model_name)
         elif policy == "fr_block_vit":
-            _scale_layer_weights_vit(model, layer, alpha, model_name)
+            _scale_layer_weights_vit(model, layers, alpha, model_name)
         else:
             raise ValueError(f"Unknown policy: {policy}")
 
@@ -327,27 +328,44 @@ def _apply_fc(model, alpha: float, model_name: str, finetune_scaling_last: float
             if hasattr(model, 'fc'):
                 for param in model.fc.parameters():
                     param.mul_(finetune_scaling_last)
+                    print("fc norm after scaling:", model.fc.weight.norm().item())
+        if model_name == "vit":
+                # Applying the finetune_scaling to the final classifier
+            if hasattr(model, 'fc'):
+                print(f"Scaling FC head by: {finetune_scaling_last}")
+                for param in model.fc.parameters():
+                    param.mul_(finetune_scaling_last)
+                
+                # Verify the norm of the Linear layer specifically (index 1 in Sequential)
+                if isinstance(model.fc[1], torch.nn.Linear):
+                    weight_norm = model.fc[1].weight.norm().item()
+                    print(f"FC Linear weight norm after scaling: {weight_norm:.4f}")
 
-def scale_layer_weights_vit(model, layer_idx:int ,alpha:float ,model_name: str ):
+def _scale_layer_weights_vit(model, layers: list[int], alpha: float, model_name: str):
     """
-    Directly scales the parameter values of a specific encoder layer.
+    Directly scales the parameter values of one or multiple specific encoder layers.
     
     Args:
         model: Your ViT instance.
-        layer_idx: The index of the encoder layer (0 for the 1st layer).
-        scale: The multiplier (e.g., 2.0 to upscale values, 0.5 to downscale).
+        layer_idxs: The index or list of indices of the encoder layers (e.g., [0, 1]).
+        alpha: The divider (scaling factor = 1/alpha).
+        model_name: The name of the model architecture.
     """
-    # Access the specific TransformerEncoder block
+
     scale = 1.0 / alpha
-    target_layer = model.enc[layer_idx]
-    
-    print(f"Scaling parameters in encoder layer {layer_idx} by factor: {scale}")
     
     with torch.no_grad():
         if model_name == "vit":
-            for name, param in target_layer.named_parameters():
-                # In-place multiplication
-                param.mul_(scale)
+            for idx in layers:
+                print(layers)
+                print(f"Scaling parameters in encoder layer {idx} by factor: {scale}")
+                idx = int(idx)
+                # Access the specific TransformerEncoder block
+                target_layer = model.enc[idx]
+                
+                for param in target_layer.parameters():
+                    # In-place multiplication
+                    param.mul_(scale)
             
     return model
  
@@ -538,10 +556,10 @@ def main(args):
         model.load_state_dict(torch.load(args.load_path))
         for param in model.parameters():
             param.data = param.data * args.finetune_scaling
-            
-    apply_relative_scaling(model, args.alpha, args.model, args.alpha_policy, args.finetune_scaling_last
-                         )
-    
+    print('layers:', args.layers)
+    print('loss_tresh:', args.loss_threshold)
+    apply_relative_scaling(model, args.alpha, args.model, args.alpha_policy, args.finetune_scaling_last, layers=args.layers)
+
     if args.alpha != 1.0:
         if args.model == "resnet":
             print("Conv1 norm after scaling:", model.conv1.weight.norm().item())
@@ -615,7 +633,8 @@ def get_parser():
     parser.add_argument('--loss_threshold', type=float, default=1e-2)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--model', choices=['vit', 'resnet'], default='resnet')
-    parser.add_argument('--layers', type=int, default=0)
+    parser.add_argument('--layers', type=int, nargs='+', default=[0, 1],
+                    help='List of layer indices to scale (e.g., --layers 0 1)')
     parser.add_argument('--alpha', type=float, default=1.0,
                         help='Relative scaling factor (first vs rest).')
     parser.add_argument('--alpha_load', type=float, default=1.0,
