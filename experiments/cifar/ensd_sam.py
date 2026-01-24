@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -260,6 +261,7 @@ def main(args):
     print('Load path (pre):', args.load_path_pre)
     print('Load path (post):', args.load_path_post)
     print('Scaling:', args.scaling)
+    
     if args.model == 'resnet':
         model_pre = torchvision.models.resnet18(pretrained=False, num_classes=100)
         model_post = torchvision.models.resnet18(pretrained=False, num_classes=100)
@@ -270,6 +272,7 @@ def main(args):
     model_post.load_state_dict(torch.load(args.load_path_post, map_location=torch.device(args.device)))
     for param in model_pre.parameters():
         param.data = param.data * args.scaling
+        
     model_pre = model_pre.to(args.device)
     model_post = model_post.to(args.device)
     print('Getting data')
@@ -303,7 +306,7 @@ def get_parser():
     parser.add_argument('--load_path_post', type=str, required=True)
     parser.add_argument('--save_path', type=str, required=True)
     parser.add_argument('--scaling', type=float, default=1.)
-    parser.add_argument('--alpha_load', type=int, default=None)
+    parser.add_argument('--alpha_load', type=float, default=None)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--batch_size', type=int, default=None)
     return parser
