@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -105,259 +106,6 @@ class MultiHeadSelfAttention(nn.Module):
         attn = torch.einsum("bhij, bhjf->bihf", score, v) #(b,n,h,f//h)
         o = self.dropout(self.o(attn.flatten(2)))
         return o
-def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "first_vs_rest", 
-                         finetune_scaling_last: float = 1,layer:int=0 ):
-    """
-    Adjust the relative scale of model layers based on the specified policy.
-    Args:
-        model: The neural network model
-        alpha: Scaling factor
-        model_name: Type of model ('resnet' or 'vit')
-        policy: Scaling policy ('first_vs_rest', 'constant', 'linear')
-        k: Number of layers to apply scaling to (for constant/linear policies)
-        prevent_weight_increase: If True, skip scaling when it would increase weights
-    """
-    print('alpha:', alpha)
-    print('policy:', policy)
-    if alpha != 1.0:
-        print('got in')
-        if policy == "first_vs_rest":
-            _apply_first_vs_rest_scaling(model, alpha, model_name)
-        elif policy == "fr_gamma_alpha_fc":
-             _apply_first_vs_rest_gamma_alpha_fc(model, alpha, model_name,finetune_scaling_last)
-        elif  policy == "fr_fc":
-            print('here')
-            _apply_fc(model, alpha, model_name,finetune_scaling_last)
-        elif policy == "fr_gamma_alpha":
-            _apply_first_vs_rest_gamma_alpha(model, alpha, model_name)
-        elif  policy == "fr_gamma":
-            _apply_first_vs_rest_gamma(model, alpha, model_name)
-        elif  policy == "fr_block_1":
-            _apply_first_vs_rest_block_1(model, alpha, model_name)
-        elif  policy == "fr_block_12":
-            _apply_first_vs_rest_block_12(model, alpha, model_name)
-        elif  policy == "fr_block_123":
-            _apply_first_vs_rest_block_123(model, alpha, model_name)
-        elif  policy == "fr_block_1234":
-            _apply_first_vs_rest_block_1234(model, alpha, model_name)
-        elif policy == "fr_block_12alpha":
-             _apply_first_vs_rest_block_12alpha(model, alpha, model_name)
-        elif policy == "fr_block_vit":
-            _scale_layer_weights_vit(model, layer, alpha, model_name)
-        else:
-            raise ValueError(f"Unknown policy: {policy}")
-
-
-def _apply_first_vs_rest_scaling(model, alpha: float, model_name: str):
-    """Original scaling behavior: scale first layer only."""
-    with torch.no_grad():
-        if model_name == "resnet":
-            # First layer = conv1
-            model.conv1.weight.div_(alpha)
-            if model.conv1.bias is not None:
-                model.conv1.bias.div_(alpha)
-            # ResNet has BatchNorm -> no readout scaling     param.data = param.data * args.finetune_scaling
-        elif model_name == "vit":
-            # First layer = patch embedding
-            model.emb.weight.data.div_(alpha)
-            if model.emb.bias is not None:
-                model.emb.bias.data.div_(alpha)
-            # Also scale learned tokens
-            if getattr(model, "cls_token", None) is not None:
-                model.cls_token.data.div_(alpha)
-            model.pos_emb.data.div_(alpha)
-            # ViT has LayerNorm -> no readout scaling
-        else:
-            raise ValueError(f"Unknown model_name: {model_name}")
-    
-def _apply_first_vs_rest_gamma_alpha_fc(model, alpha: float, model_name: str, finetune_scaling_last: float = 1.0):
-    """
-    Scales the first layer (weights/bias), the first BatchNorm (gamma),
-    and applies optional finetune scaling to the readout.
-    """
-    with torch.no_grad():
-        if model_name == "resnet":
-            # 1. Scale First Conv Layer
-            model.conv1.weight.div_(alpha)
-            if model.conv1.bias is not None:
-                model.conv1.bias.div_(alpha)
-            # 2. Scale First BatchNorm Gamma (Weight)
-            # This ensures the scaling isn't "reset" by normalization
-            if hasattr(model, 'bn1'):
-                model.bn1.weight.div_(alpha)
-            # 3. Scale Readout Layer (fc)
-            # Applying the finetune_scaling to the final classifier
-            if hasattr(model, 'fc'):
-                for param in model.fc.parameters():
-                    param.mul_(finetune_scaling_last)
-
-def _apply_first_vs_rest_gamma_alpha(model, alpha: float, model_name: str):
-    """
-    Scales the first layer (weights/bias), the first BatchNorm (gamma),
-    and applies optional finetune scaling to the readout.
-    """
-    with torch.no_grad():
-        if model_name == "resnet":
-            # 1. Scale First Conv Layer
-            model.conv1.weight.div_(alpha)
-            if model.conv1.bias is not None:
-                model.conv1.bias.div_(alpha)
-            # 2. Scale First BatchNorm Gamma (Weight)
-            # This ensures the scaling isn't "reset" by normalization
-            if hasattr(model, 'bn1'):
-                model.bn1.weight.div_(alpha)
-                # Note: Scaling bn1.bias (beta) is optional depending on
-
-
-def _apply_first_vs_rest_gamma(model, alpha: float, model_name: str):
-    with torch.no_grad():
-         if model_name == "resnet":
-            if hasattr(model, 'bn1'):
-                model.bn1.weight.div_(alpha)
-                # Note: Scaling bn1.bias (beta) is optional depending on
-                # if you want to shift the threshold or just scale the signal.
-                # model.bn1.bias.div_(alpha)
-
-def _apply_first_vs_rest_block_1(model, alpha: float, model_name: str): 
-  # Calculate the scale factor
-    scale = 1.0 / alpha
-    with torch.no_grad():
-         if model_name == "resnet":
-            # Option A: BLOCK (The first block)
-            for name, param in model.layer1.named_parameters():
-                param.copy_(param * scale)
-            # Option A: BLOCK (The first block) and second 
-           
-def _apply_first_vs_rest_block_12alpha(model, alpha: float, model_name: str): 
-    scale = 1.0 / alpha
-    with torch.no_grad():
-            if model_name == "resnet":
-                #Scale First Conv Layer
-                model.conv1.weight.div_(alpha)
-                if model.conv1.bias is not None:
-                    model.conv1.bias.div_(alpha)
-                if hasattr(model, 'bn1'):
-                    model.bn1.weight.div_(alpha)
-                for name, param in model.layer1.named_parameters():
-                    param.copy_(param * scale)        
-                for name, param in model.layer2.named_parameters():
-                    param.copy_(param * scale)       
-      
-def _apply_first_vs_rest_block_12(model, alpha: float, model_name: str): 
-  # Calculate the scale factor
-    scale = 1.0 / alpha
-    with torch.no_grad():
-         if model_name == "resnet":
-            # Option A: BLOCK (The first block)
-            for name, param in model.layer1.named_parameters():
-                param.copy_(param * scale)
-            # Option A: BLOCK (The first block) and second 
-            for name, param in model.layer2.named_parameters():
-                param.copy_(param * scale)
-            
-def _apply_first_vs_rest_block_123(model, alpha: float, model_name: str): 
-  # Calculate the scale factor
-    scale = 1.0 / alpha
-    with torch.no_grad():
-        if model_name == "resnet":
-            # Option A: BLOCK (The first block)
-            for name, param in model.layer1.named_parameters():
-                param.copy_(param * scale)
-            # Option A: BLOCK (The first block) and second 
-            for name, param in model.layer2.named_parameters():
-                param.copy_(param * scale)
-            for name, param in model.layer3.named_parameters():
-                param.copy_(param * scale)
-
-def _apply_first_vs_rest_block_1234(model, alpha: float, model_name: str): 
-  # Calculate the scale factor
-    scale = 1.0 / alpha
-    with torch.no_grad():
-        if model_name == "resnet":
-            # Option A: BLOCK (The first block)
-            for name, param in model.layer1.named_parameters():
-                param.copy_(param * scale)
-            # Option A: BLOCK (The first block) and second 
-            for name, param in model.layer2.named_parameters():
-                param.copy_(param * scale)
-            for name, param in model.layer3.named_parameters():
-                param.copy_(param * scale)
-            for name, param in model.layer4.named_parameters():
-                param.copy_(param * scale)
-                
-def _apply_fc(model, alpha: float, model_name: str, finetune_scaling_last: float = 1.0):
-    """
-    Scales the first layer (weights/bias), the first BatchNorm (gamma),
-    and applies optional finetune scaling to the readout.
-    """
-    with torch.no_grad():
-        if model_name == "resnet":
-            # Applying the finetune_scaling to the final classifier
-            if hasattr(model, 'fc'):
-                for param in model.fc.parameters():
-                    param.mul_(finetune_scaling_last)
-                    print("fc norm after scaling:", model.fc.weight.norm().item())
-        if model_name == "vit":
-            print('here_2')
-            if hasattr(model, 'fc'):
-                for param in model.fc.parameters():
-                    param.mul_(finetune_scaling_last)
-                    print("fc norm after scaling:", model.fc.weight.norm().item())
-
- #def _scale_layer_weights_vit(model, layer_idx:int ,alpha:float ,model_name: str ):
-    """
-    Directly scales the parameter values of a specific encoder layer.
-    
-    Args:
-        model: Your ViT instance.
-        layer_idx: The index of the encoder layer (0 for the 1st layer).
-        scale: The multiplier (e.g., 2.0 to upscale values, 0.5 to downscale).
-    """
-    # Access the specific TransformerEncoder block
-    # Access the specific TransformerEncoder block
-    # scale = 1.0 / alpha
-     #target_layer = model.enc[layer_idx]
-    
-    # print(f"Scaling parameters in encoder layer {layer_idx} by factor: {scale}")
-    
-     #with torch.no_grad():
-        # if model_name == "vit":
-        #    for name, param in target_layer.named_parameters():
-                # In-place multiplication
-          #       param.mul_(scale)
-            
-   #  return model
-
-
-def _scale_layer_weights_vit(model, layer_idxs: list[int], alpha: float, model_name: str):
-    """
-    Directly scales the parameter values of one or multiple specific encoder layers.
-    
-    Args:
-        model: Your ViT instance.
-        layer_idxs: The index or list of indices of the encoder layers (e.g., [0, 1]).
-        alpha: The divider (scaling factor = 1/alpha).
-        model_name: The name of the model architecture.
-    """
-    # Ensure layer_idxs is a list even if a single int is passed
-    if isinstance(layer_idxs, int):
-        layer_idxs = [layer_idxs]
-        
-    scale = 1.0 / alpha
-    
-    with torch.no_grad():
-        if model_name == "vit":
-            for idx in layer_idxs:
-                print(f"Scaling parameters in encoder layer {idx} by factor: {scale}")
-                
-                # Access the specific TransformerEncoder block
-                target_layer = model.enc[idx]
-                
-                for param in target_layer.parameters():
-                    # In-place multiplication
-                    param.mul_(scale)
-            
-    return model
 
 def data_to_numpy(train_set, test_set, train_indices, test_indices):
     batch_size=max(len(train_indices), len(test_indices))
@@ -393,6 +141,7 @@ def build_dataloaders(train_set, test_set, train_indices, test_indices, batch_si
 
 def get_train_data(random_seed):
     torch.manual_seed(args.random_seed)
+   
     np.random.seed(args.random_seed)
     transform = transforms.Compose(
         [transforms.ToTensor(),
@@ -504,6 +253,16 @@ def ensd(x1, x2, batch_size=None):
 
 def main(args):
     pathlib.Path(args.save_path).mkdir(parents=True, exist_ok=True)
+    print('Random seed:', args.random_seed)
+    print('Alpha load:', args.alpha_load)
+    print('Model:', args.model)
+    print('Device:', args.device)
+    print('Batch size:', args.batch_size)
+    print('Save path:', args.save_path)
+    print('Load path (pre):', args.load_path_pre)
+    print('Load path (post):', args.load_path_post)
+    print('Scaling:', args.scaling)
+    
     if args.model == 'resnet':
         model_pre = torchvision.models.resnet18(pretrained=False, num_classes=100)
         model_post = torchvision.models.resnet18(pretrained=False, num_classes=100)
@@ -512,12 +271,9 @@ def main(args):
         model_post = ViT(num_classes=100)
     model_pre.load_state_dict(torch.load(args.load_path_pre, map_location=torch.device(args.device)))
     model_post.load_state_dict(torch.load(args.load_path_post, map_location=torch.device(args.device)))
-    
-    
     for param in model_pre.parameters():
         param.data = param.data * args.scaling
-    apply_relative_scaling(model_pre, args.alpha, args.model, args.alpha_policy, args.finetune_scaling_last)
-    
+        
     model_pre = model_pre.to(args.device)
     model_post = model_post.to(args.device)
     print('Getting data')
@@ -550,16 +306,8 @@ def get_parser():
     parser.add_argument('--load_path_pre', type=str, required=True)
     parser.add_argument('--load_path_post', type=str, required=True)
     parser.add_argument('--save_path', type=str, required=True)
-    parser.add_argument('--scaling', type=float, default=1.0)
-    parser.add_argument('--layers', type=int, default=0)
-    parser.add_argument('--alpha', type=float, default=1.0,
-                        help='Relative scaling factor (first vs rest).')
-    parser.add_argument('--alpha_load', type=float, default=1.0,
-                        help='Relative scaling factor (first vs rest).')
-    parser.add_argument('--alpha_policy', type=str, default='first_vs_rest',
-                        choices=['first_vs_rest', 'all_except_output','fr_gamma_alpha_fc', 'fr_gamma_alpha','fr_gamma','fr_block_1','fr_block_12','fr_block_123','fr_block_1234','fr_block_12alpha','fr_fc','fr_block_vit'],
-                        help='Which parts of the model to scale at init.')
-    parser.add_argument('--finetune_scaling_last', type=float, default=1.0)
+    parser.add_argument('--scaling', type=float, default=1.)
+    parser.add_argument('--alpha_load', type=float, default=None)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--batch_size', type=int, default=None)
     return parser

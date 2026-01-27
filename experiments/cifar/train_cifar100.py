@@ -174,8 +174,12 @@ def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "
             _apply_first_vs_rest_block_1234(model, alpha, model_name)
         elif policy == "fr_block_12alpha":
              _apply_first_vs_rest_block_12alpha(model, alpha, model_name)
+        elif policy == "fr_block_123_alpha":
+             _apply_first_vs_rest_block_123alpha(model, alpha, model_name)
         elif policy == "fr_block_vit":
             _scale_layer_weights_vit(model, layers, alpha, model_name)
+        elif policy == "scaling_pre_train":
+            _scaling_all(model, alpha, model_name)
         else:
             raise ValueError(f"Unknown policy: {policy}")
 
@@ -273,7 +277,44 @@ def _apply_first_vs_rest_block_12alpha(model, alpha: float, model_name: str):
                 for name, param in model.layer1.named_parameters():
                     param.copy_(param * scale)        
                 for name, param in model.layer2.named_parameters():
-                    param.copy_(param * scale)       
+                    param.copy_(param * scale)      
+    
+def _apply_first_vs_rest_block_123alpha(model, alpha: float, model_name: str): 
+    scale = 1.0 / alpha
+    with torch.no_grad():
+        if model_name == "resnet":
+            print(f"\n--- Scaling Verification (Alpha: {alpha}) ---")
+            
+            # --- Scale First Conv Layer ---
+            orig_conv_norm = model.conv1.weight.norm().item()
+            model.conv1.weight.div_(alpha)
+            if model.conv1.bias is not None:
+                model.conv1.bias.div_(alpha)
+            print(f"Conv1 weight norm: {orig_conv_norm:.6f} -> {model.conv1.weight.norm().item():.6f}")
+
+            # --- Scale BN1 ---
+            if hasattr(model, 'bn1'):
+                orig_bn_norm = model.bn1.weight.norm().item()
+                model.bn1.weight.div_(alpha)
+                print(f"BN1 weight norm:   {orig_bn_norm:.6f} -> {model.bn1.weight.norm().item():.6f}")
+
+            # --- Scale Blocks 1, 2, and 3 ---
+            # Helper to verify blocks since they contain many parameters
+            for layer_num, layer_module in [("Layer1", model.layer1), 
+                                            ("Layer2", model.layer2), 
+                                            ("Layer3", model.layer3)]:
+                
+                # Get norm of first parameter found just to verify the math worked
+                first_param = next(layer_module.parameters())
+                orig_norm = first_param.norm().item()
+                
+                # Apply scaling
+                for name, param in layer_module.named_parameters():
+                    param.copy_(param * scale)
+                
+                print(f"{layer_num} verification: {orig_norm:.6f} -> {first_param.norm().item():.6f}")
+            
+            print("-------------------------------------------\n")
       
 def _apply_first_vs_rest_block_12(model, alpha: float, model_name: str): 
   # Calculate the scale factor
@@ -341,6 +382,12 @@ def _apply_fc(model, alpha: float, model_name: str, finetune_scaling_last: float
                     weight_norm = model.fc[1].weight.norm().item()
                     print(f"FC Linear weight norm after scaling: {weight_norm:.4f}")
 
+
+def _scaling_all(model, alpha: float, model_name: str):
+    for param in model.parameters():
+            param.data = param.data * alpha
+    print(f"All the weights have been scaled by a factor of {alpha}.")
+    
 def _scale_layer_weights_vit(model, layers: list[int], alpha: float, model_name: str):
     """
     Directly scales the parameter values of one or multiple specific encoder layers.
@@ -507,6 +554,23 @@ def train_model(model, X_train, y_train, X_train_aux, y_train_aux, criterion, op
 def main(args):
     print("Creating save directory...")
     print("Save path:", args.save_path)
+    print('Random seed:', args.random_seed)
+    print('Alpha load:', args.alpha_load)
+    print('Model:', args.model)
+    print('Device:', args.device)
+    print('Load path:', args.load_path)
+    print('n_aux_samples: ', args.n_aux_samples)
+    print('n_samples: ', args.n_samples)
+    print('n_samples_load: ', args.n_samples_load)
+    print('mode: ', args.mode)
+    print('finetune_scaling: ', args.finetune_scaling)
+    print('finetune_scaling_last: ', args.finetune_scaling_last)
+    print('epochs: ', args.epochs)
+    print('loss_threshold: ', args.loss_threshold)
+    print('layers: ', args.layers)
+    print('alpha: ', args.alpha)
+    print('alpha_policy: ', args.alpha_policy)
+   
     pathlib.Path(args.save_path).mkdir(parents=True, exist_ok=True)
     
     torch.manual_seed(args.random_seed)
@@ -623,6 +687,7 @@ def get_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_aux_samples', type=int, default=49000)
     parser.add_argument('--n_samples', type=int, default=100)
+    parser.add_argument('--n_samples_load', type=int, default=100)
     parser.add_argument('--load_path', type=str, default=None)
     parser.add_argument('--mode', choices=['pretrain', 'multitask', 'singletask', 'finetuning'], required=True)
     parser.add_argument('--random_seed', type=int, default=0)
@@ -640,7 +705,7 @@ def get_parser():
     parser.add_argument('--alpha_load', type=float, default=1.0,
                         help='Relative scaling factor (first vs rest).')
     parser.add_argument('--alpha_policy', type=str, default='first_vs_rest',
-                        choices=['first_vs_rest', 'all_except_output','fr_gamma_alpha_fc', 'fr_gamma_alpha','fr_gamma','fr_block_1','fr_block_12','fr_block_123','fr_block_1234','fr_block_12alpha','fr_fc','fr_block_vit'],
+                        choices=['first_vs_rest', 'all_except_output','fr_gamma_alpha_fc', 'fr_gamma_alpha','fr_gamma','fr_block_1','fr_block_12','fr_block_123','fr_block_1234','fr_block_12alpha','fr_fc','fr_block_vit', 'scaling_pre_train','fr_block_123_alpha'],
                         help='Which parts of the model to scale at init.')
     
     return parser
