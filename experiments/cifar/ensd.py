@@ -107,6 +107,43 @@ class MultiHeadSelfAttention(nn.Module):
         o = self.dropout(self.o(attn.flatten(2)))
         return o
 
+def apply_relative_scaling(model, alpha: float, model_name: str, policy: str = "first_vs_rest", 
+                       ):
+    """
+    Adjust the relative scale of model layers based on the specified policy.
+    Args:
+        model: The neural network model
+        alpha: Scaling factor
+        model_name: Type of model ('resnet' or 'vit')
+        policy: Scaling policy ('first_vs_rest', 'constant', 'linear')
+        k: Number of layers to apply scaling to (for constant/linear policies)
+        prevent_weight_increase: If True, skip scaling when it would increase weights
+    """
+    print('alpha:', alpha)
+    print('policy:', policy)
+
+    if alpha != 1.0:
+        print('got in')
+        if  policy == "fr_fc":
+            print('here')
+            _apply_fc(model, alpha, model_name)
+        else:
+            raise ValueError(f"Unknown policy: {policy}")
+        
+def _apply_fc(model, alpha: float, model_name: str):
+    """
+    Scales the first layer (weights/bias), the first BatchNorm (gamma),
+    and applies optional finetune scaling to the readout.
+    """
+    with torch.no_grad():
+        if model_name == "resnet":
+            # Applying the finetune_scaling to the final classifier
+            if hasattr(model, 'fc'):
+                for param in model.fc.parameters():
+                    param.mul_(alpha)
+                    print("fc norm after scaling:", model.fc.weight.norm().item())
+       
+        
 def data_to_numpy(train_set, test_set, train_indices, test_indices):
     batch_size=max(len(train_indices), len(test_indices))
     dataloaders, dataset_sizes = build_dataloaders(train_set, test_set, train_indices, test_indices, batch_size)
@@ -118,7 +155,6 @@ def data_to_numpy(train_set, test_set, train_indices, test_indices):
     for inputs, labels in dataloaders['valid']:
         X_valid = inputs.data.numpy()
         y_valid = labels.data.numpy()
-
     return X_train, y_train, X_valid, y_valid
 
 def build_dataloaders(train_set, test_set, train_indices, test_indices, batch_size=128):
@@ -269,11 +305,17 @@ def main(args):
     if args.model == 'vit':
         model_pre = ViT(num_classes=100)
         model_post = ViT(num_classes=100)
+        
     model_pre.load_state_dict(torch.load(args.load_path_pre, map_location=torch.device(args.device)))
     model_post.load_state_dict(torch.load(args.load_path_post, map_location=torch.device(args.device)))
-    for param in model_pre.parameters():
-        param.data = param.data * args.scaling
+    if args.scaling_type == 'last':
+        print('Applying last layer scaling')
+        apply_relative_scaling(model_pre, args.scaling, args.model, policy='fr_fc')
         
+    else:
+        for param in model_pre.parameters():
+            param.data = param.data * args.scaling
+
     model_pre = model_pre.to(args.device)
     model_post = model_post.to(args.device)
     print('Getting data')
@@ -301,6 +343,7 @@ def main(args):
 
 def get_parser():
     parser = argparse.ArgumentParser()
+    
     parser.add_argument('--random_seed', type=int, default=None)
     parser.add_argument('--model', choices=['resnet', 'vit'])
     parser.add_argument('--load_path_pre', type=str, required=True)
@@ -310,6 +353,8 @@ def get_parser():
     parser.add_argument('--alpha_load', type=float, default=None)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--batch_size', type=int, default=None)
+    parser.add_argument('--scaling_type', type=str, choices=['last', 'all'], default='all')
+    
     return parser
 
 if __name__ == '__main__':
